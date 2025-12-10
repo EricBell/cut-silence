@@ -7,6 +7,8 @@ from typing import List, Tuple
 import subprocess
 import json
 
+from cut_silence.ffmpeg_runner import FFmpegProgressRunner
+
 
 class VideoAnalyzer:
     """Analyzes videos to detect silent segments."""
@@ -24,18 +26,22 @@ class VideoAnalyzer:
         self.min_duration = min_duration
         self.verbose = verbose
 
-    def detect_silence(self, video_path: Path) -> List[Tuple[float, float]]:
+    def detect_silence(self, video_path: Path, show_progress: bool = True) -> List[Tuple[float, float]]:
         """
         Detect silent segments in the video.
 
         Args:
             video_path: Path to the video file
+            show_progress: Whether to show progress bar
 
         Returns:
             List of tuples (start_time, end_time) representing silent segments
         """
         if self.verbose:
             print(f"Analyzing silence in: {video_path}")
+
+        # Get video duration for progress tracking
+        total_duration = self.get_video_duration(video_path)
 
         # Use FFmpeg's silencedetect filter to find silent segments
         cmd = [
@@ -46,19 +52,37 @@ class VideoAnalyzer:
             "-"
         ]
 
-        # Run FFmpeg and capture stderr (where silencedetect outputs)
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
+        # Run FFmpeg with progress tracking
+        runner = FFmpegProgressRunner()
+        result = runner.run_with_progress(
+            cmd=cmd,
+            description="Detecting silence",
+            total_duration=total_duration,
+            show_progress=show_progress
         )
 
         # Parse the output to extract silence segments
+        silent_segments = self._parse_silence_output(result.stderr)
+
+        if self.verbose:
+            print(f"Found {len(silent_segments)} silent segments")
+
+        return silent_segments
+
+    def _parse_silence_output(self, stderr: str) -> List[Tuple[float, float]]:
+        """
+        Parse FFmpeg silencedetect output to extract silence segments.
+
+        Args:
+            stderr: FFmpeg stderr output
+
+        Returns:
+            List of tuples (start_time, end_time) representing silent segments
+        """
         silent_segments = []
         silence_start = None
 
-        for line in result.stderr.split('\n'):
+        for line in stderr.split('\n'):
             if 'silencedetect' in line:
                 if 'silence_start' in line:
                     # Extract start time
@@ -72,9 +96,6 @@ class VideoAnalyzer:
                         silence_end = float(parts[1].strip().split()[0])
                         silent_segments.append((silence_start, silence_end))
                         silence_start = None
-
-        if self.verbose:
-            print(f"Found {len(silent_segments)} silent segments")
 
         return silent_segments
 

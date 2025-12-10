@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import List
 import subprocess
 import tempfile
+import json
+
+from cut_silence.ffmpeg_runner import FFmpegProgressRunner
 
 
 class VideoConcatenator:
@@ -21,7 +24,7 @@ class VideoConcatenator:
         self.verbose = verbose
 
     def concatenate_segments(
-        self, segment_files: List[Path], output_path: Path
+        self, segment_files: List[Path], output_path: Path, show_progress: bool = True
     ) -> bool:
         """
         Concatenate video segments into a single file.
@@ -29,6 +32,7 @@ class VideoConcatenator:
         Args:
             segment_files: List of segment file paths to concatenate
             output_path: Path for the output video file
+            show_progress: Whether to show progress bar
 
         Returns:
             True if concatenation was successful, False otherwise
@@ -41,6 +45,11 @@ class VideoConcatenator:
                 print("No segments to concatenate")
             return False
 
+        # Estimate total duration for progress tracking
+        total_duration = self._estimate_total_duration(segment_files)
+
+        runner = FFmpegProgressRunner()
+
         # If only one segment, just copy it
         if len(segment_files) == 1:
             cmd = [
@@ -51,11 +60,11 @@ class VideoConcatenator:
                 "-c", "copy",
                 str(output_path)
             ]
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+            result = runner.run_with_progress(
+                cmd=cmd,
+                description="Copying segment",
+                total_duration=total_duration,
+                show_progress=show_progress
             )
 
             success = result.returncode == 0 and output_path.exists()
@@ -90,11 +99,11 @@ class VideoConcatenator:
                 str(output_path)
             ]
 
-            result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+            result = runner.run_with_progress(
+                cmd=cmd,
+                description="Concatenating segments",
+                total_duration=total_duration,
+                show_progress=show_progress
             )
 
             success = result.returncode == 0 and output_path.exists()
@@ -112,6 +121,47 @@ class VideoConcatenator:
             # Clean up temporary concat file
             if concat_file.exists():
                 concat_file.unlink()
+
+    def _estimate_total_duration(self, segment_files: List[Path]) -> float:
+        """
+        Estimate total duration by probing segment files.
+
+        Args:
+            segment_files: List of segment file paths
+
+        Returns:
+            Estimated total duration in seconds
+        """
+        total_duration = 0.0
+
+        for segment_file in segment_files:
+            try:
+                cmd = [
+                    "ffprobe",
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "json",
+                    str(segment_file)
+                ]
+
+                result = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+
+                if result.returncode == 0:
+                    data = json.loads(result.stdout)
+                    if "format" in data and "duration" in data["format"]:
+                        duration = float(data["format"]["duration"])
+                        total_duration += duration
+            except (json.JSONDecodeError, ValueError, KeyError):
+                # If we can't probe a segment, just skip it
+                # Progress bar will still work, just less accurate
+                pass
+
+        return total_duration
 
     def generate_output_path(self, input_path: Path, suffix: str = "_cut") -> Path:
         """

@@ -157,7 +157,7 @@ def process_video(
         # Step 2: Detect silence
         if verbose:
             print("Detecting silence...")
-        silent_segments = analyzer.detect_silence(input_file)
+        silent_segments = analyzer.detect_silence(input_file, show_progress=True)
 
         # Step 3: Calculate non-silent segments
         non_silent_segments = analyzer.calculate_non_silent_segments(
@@ -211,7 +211,7 @@ def process_video(
         temp_dir = Path(tempfile.mkdtemp(prefix="cut_silence_"))
         try:
             segment_files = processor.extract_segments(
-                input_file, non_silent_segments, temp_dir
+                input_file, non_silent_segments, temp_dir, show_progress=True
             )
 
             if not segment_files:
@@ -222,7 +222,7 @@ def process_video(
             if verbose:
                 print("Concatenating segments...")
 
-            success = concatenator.concatenate_segments(segment_files, output_file)
+            success = concatenator.concatenate_segments(segment_files, output_file, show_progress=True)
 
             if success:
                 reporter.print_summary(total_duration, output_duration, len(silent_segments))
